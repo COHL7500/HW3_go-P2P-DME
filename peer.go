@@ -1,3 +1,6 @@
+// ---------------------------- //
+// ---------- IMPORT ---------- //
+// ---------------------------- //
 package main
 
 import (
@@ -5,35 +8,38 @@ import (
     "net"
     "log"
     "io"
-    "fmt"
-    "strings"
+    "os"
+    "strconv"
 
     "github.com/gop2pdme/proto"
     "google.golang.org/grpc"
 )
 
-pId int32;
+var pId int32
 
+// ---------------------------- //
+// ---------- SERVER ---------- //
+// ---------------------------- //
 type user struct {
     id int32
-    chanCom chan goChittyChat.Post
+    chanCom chan gop2pdme.Post
     chanDone chan bool
 }
 
 type server struct {
-    gop2pdme.UnimplementedP2PServiceServer
     users []*user
-    clients map[int32]gop2pdme.P2PServiceClient
+    gop2pdme.UnimplementedP2PServiceServer
 }
 
 func (s *server) Connect(in *gop2pdme.Post, srv gop2pdme.P2PService_ConnectServer) error {
     userData := user{in.Id, make(chan gop2pdme.Post), make(chan bool)}
     s.users = append(s.users, &userData)
-    srv.Send(&gop2pdme.Post{Id: userData.id, Messages: nil})
+    srv.Send(&gop2pdme.Post{Id: userData.id})
+    log.Printf("Peer %v connected to the server...", in.Id)
 
     for {
         select {
-            case m := userData.chanCom:
+            case m := <-userData.chanCom:
                 srv.Send(&m)
             case <-userData.chanDone:
                 s.users[userData.id] = nil
@@ -45,6 +51,7 @@ func (s *server) Connect(in *gop2pdme.Post, srv gop2pdme.P2PService_ConnectServe
 func (s *server) Disconnect(context context.Context, in *gop2pdme.Post) (out *gop2pdme.Empty, err error) {
     usr := s.users[in.Id]
     usr.chanDone <- true
+    log.Printf("Peer %v disconnected from the server...", in.Id)
     return &gop2pdme.Empty{}, nil
 }
 
@@ -60,10 +67,45 @@ func (s *server) Messages(srv gop2pdme.P2PService_MessagesServer) error {
             log.Fatalf("Failed to receive %v", err)
             return nil
         }
+
+        log.Println(resp)
     }
 }
 
-func inPost(done chan bool, inStream gop2pdme.P2PService_ConnectClient){
+func (s *server) start(id int32, addr string) {
+    if addr == "nil" {
+        log.Printf("Failed to establish server: addr was empty")
+        return
+    }
+
+    // create listener
+    pId = id
+    lis, err := net.Listen("tcp", addr)
+    if err != nil {
+        log.Fatalf("Failed to listen: %v", err)
+    }
+
+    // create grpc server
+    ss := grpc.NewServer()
+    gop2pdme.RegisterP2PServiceServer(ss, &server{})
+    log.Printf("server listening at %v", lis.Addr())
+
+    // launch server
+    go func() {
+        if err := ss.Serve(lis); err != nil {
+            log.Fatalf("Failed to serve: %v", err)
+        }
+    }()
+}
+
+// ---------------------------- //
+// ---------- CLIENT ---------- //
+// ---------------------------- //
+type client struct {
+    clients map[int32]gop2pdme.P2PServiceClient
+}
+
+func (c *client) inPost(done chan bool, inStream gop2pdme.P2PService_ConnectClient){
     for {
         resp, err := inStream.Recv()
 
@@ -80,52 +122,40 @@ func inPost(done chan bool, inStream gop2pdme.P2PService_ConnectClient){
     }
 }
 
-func outPost(done chan bool, outStream gop2pdme.P2PService_MessageClient){
-    usrIn := gop2pdme.Post{Id: pId, Message: nil}
-    outStream.send(&usrIn)
+func (c *client) outPost(done chan bool, outStream gop2pdme.P2PService_MessagesClient){
+    usrIn := gop2pdme.Post{Id: pId}
+    outStream.Send(&usrIn)
 }
 
-func startServer(addr string) {
-    // create listener
-    lis, err := net.Listen("tcp", addr)
-    if err != nil {
-        log.Fatalf("Failed to listen: %v", err)
+func (c *client) start(id int32, addr string) {
+    if addr == "nil" {
+        log.Printf("Failed to establish client side: addr was empty")
+        return
     }
 
-    // create grpc server
-    s := grpc.NewServer()
-    gop2pdme.RegisterChatServiceServer(s, &server{})
-    log.Printf("server listening at %v", lis.Addr())
-
-    // launch server
-    if err := s.Serve(lis); err != nil {
-        log.Fatalf("Failed to serve: %v", err)
-    }
-}
-
-func (s *server) startClient(id int32, addr string) {
     // dial server
+    c.clients = make(map[int32]gop2pdme.P2PServiceClient)
     conn, err := grpc.Dial(addr, grpc.WithInsecure())
     if err != nil {
         log.Fatalf("Failed to connect %v", err)
     }
-    s.clients[name] = gop2pdme.NewP2PServiceClient(conn)
+    c.clients[id] = gop2pdme.NewP2PServiceClient(conn)
 
     // setup streams
-    inStream, inErr := s.clients[name].Connect(context.Background(), &gop2pdme.Post{Id: pId})
+    inStream, inErr := c.clients[id].Connect(context.Background(), &gop2pdme.Post{Id: pId}, grpc.WaitForReady(true))
     if inErr != nil {
         log.Fatalf("Failed to open connection stream: %v", inErr)
     }
-    outStream, outErr := s.clients[name].Messages(context.Background())
+    outStream, outErr := c.clients[id].Messages(context.Background())
     if outErr != nil {
         log.Fatalf("Failed to open message stream: %v", outErr)
     }
-    log.Println("Client connected to peer %v", addr)
+    log.Printf("Client connected to peer %v (%v)", id, addr)
 
     // running goroutines streams
     done := make(chan bool)
-    go inPost(done, inStream)
-    go outPost(done, outStream)
+    go c.inPost(done, inStream)
+    go c.outPost(done, outStream)
     <-done
 
     // closes server connection
@@ -134,8 +164,23 @@ func (s *server) startClient(id int32, addr string) {
     log.Printf("Peer connection ended %v", addr)
 }
 
+// -------------------------- //
+// ---------- SETUP---------- //
+// -------------------------- //
 func main() {
+    // args: peer ID, peer server IP/PORT, neighbor ID, neighbor IP/PORT
     args := os.Args[1:]
-    startServer(args[0])
-    startClient()
+
+    if len(args) < 4 {
+        log.Println("Arguments required: <peer ID> <peer IP:PORT> <neighbor ID> <neighbor IP:PORT>")
+        os.Exit(1)
+    }
+
+    var i, _ = strconv.ParseInt(args[0],10,32)
+    var j, _ = strconv.ParseInt(args[2],10,32)
+
+    fin := make(chan bool)
+    go (&server{}).start(int32(i), args[1])
+    go (&client{}).start(int32(j), args[3])
+    <-fin
 }
