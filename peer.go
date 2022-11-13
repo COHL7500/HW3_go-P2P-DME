@@ -23,7 +23,7 @@ type user struct {
 type server struct {
     gop2pdme.UnimplementedP2PServiceServer
     users []*user
-    clients map[string]gop2pdme.P2PServiceClient
+    clients map[int32]gop2pdme.P2PServiceClient
 }
 
 func (s *server) Connect(in *gop2pdme.Post, srv gop2pdme.P2PService_ConnectServer) error {
@@ -63,9 +63,31 @@ func (s *server) Messages(srv gop2pdme.P2PService_MessagesServer) error {
     }
 }
 
-func startServer(IPAddr string, IPPort string) {
+func inPost(done chan bool, inStream gop2pdme.P2PService_ConnectClient){
+    for {
+        resp, err := inStream.Recv()
+
+        if err == io.EOF {
+            done <- true
+            return
+        }
+
+        if err != nil {
+            log.Fatalf("Failed to receive %v", err)
+        }
+
+        log.Printf("received the message: %v", resp.Message)
+    }
+}
+
+func outPost(done chan bool, outStream gop2pdme.P2PService_MessageClient){
+    usrIn := gop2pdme.Post{Id: pId, Message: nil}
+    outStream.send(&usrIn)
+}
+
+func startServer(addr string) {
     // create listener
-    lis, err := net.Listen("tcp", IPAddr + ":" + IPPort)
+    lis, err := net.Listen("tcp", addr)
     if err != nil {
         log.Fatalf("Failed to listen: %v", err)
     }
@@ -81,19 +103,39 @@ func startServer(IPAddr string, IPPort string) {
     }
 }
 
-func (s *server) startClient(name string, addr string) {
+func (s *server) startClient(id int32, addr string) {
     // dial server
     conn, err := grpc.Dial(addr, grpc.WithInsecure())
     if err != nil {
         log.Fatalf("Failed to connect %v", err)
     }
-
     s.clients[name] = gop2pdme.NewP2PServiceClient(conn)
-    r, err := s.clients[name].Connect(context.Background(), &gop2pdme.Post{Id: pId})
-    
+
+    // setup streams
+    inStream, inErr := s.clients[name].Connect(context.Background(), &gop2pdme.Post{Id: pId})
+    if inErr != nil {
+        log.Fatalf("Failed to open connection stream: %v", inErr)
+    }
+    outStream, outErr := s.clients[name].Messages(context.Background())
+    if outErr != nil {
+        log.Fatalf("Failed to open message stream: %v", outErr)
+    }
+    log.Println("Client connected to peer %v", addr)
+
+    // running goroutines streams
+    done := make(chan bool)
+    go inPost(done, inStream)
+    go outPost(done, outStream)
+    <-done
+
+    // closes server connection
+    log.Printf("Closing peer connection %v", addr)
+    conn.Close()
+    log.Printf("Peer connection ended %v", addr)
 }
 
 func main() {
     args := os.Args[1:]
-
+    startServer(args[0])
+    startClient()
 }
