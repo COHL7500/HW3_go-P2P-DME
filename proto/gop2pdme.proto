@@ -11,4 +11,5 @@ service P2PService {
 message Post {
     int32 id = 1;
     string message = 2;
+    int64 lamport = 3;
 }
