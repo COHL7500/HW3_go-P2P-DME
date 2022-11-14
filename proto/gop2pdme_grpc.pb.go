@@ -22,7 +22,7 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type P2PServiceClient interface {
-	Recv(ctx context.Context, opts ...grpc.CallOption) (P2PService_RecvClient, error)
+	Recv(ctx context.Context, in *Post, opts ...grpc.CallOption) (*Post, error)
 }
 
 type p2PServiceClient struct {
@@ -33,45 +33,20 @@ func NewP2PServiceClient(cc grpc.ClientConnInterface) P2PServiceClient {
 	return &p2PServiceClient{cc}
 }
 
-func (c *p2PServiceClient) Recv(ctx context.Context, opts ...grpc.CallOption) (P2PService_RecvClient, error) {
-	stream, err := c.cc.NewStream(ctx, &P2PService_ServiceDesc.Streams[0], "/gop2pdme.P2PService/Recv", opts...)
+func (c *p2PServiceClient) Recv(ctx context.Context, in *Post, opts ...grpc.CallOption) (*Post, error) {
+	out := new(Post)
+	err := c.cc.Invoke(ctx, "/gop2pdme.P2PService/Recv", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &p2PServiceRecvClient{stream}
-	return x, nil
-}
-
-type P2PService_RecvClient interface {
-	Send(*Post) error
-	CloseAndRecv() (*Post, error)
-	grpc.ClientStream
-}
-
-type p2PServiceRecvClient struct {
-	grpc.ClientStream
-}
-
-func (x *p2PServiceRecvClient) Send(m *Post) error {
-	return x.ClientStream.SendMsg(m)
-}
-
-func (x *p2PServiceRecvClient) CloseAndRecv() (*Post, error) {
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	m := new(Post)
-	if err := x.ClientStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
+	return out, nil
 }
 
 // P2PServiceServer is the server API for P2PService service.
 // All implementations must embed UnimplementedP2PServiceServer
 // for forward compatibility
 type P2PServiceServer interface {
-	Recv(P2PService_RecvServer) error
+	Recv(context.Context, *Post) (*Post, error)
 	mustEmbedUnimplementedP2PServiceServer()
 }
 
@@ -79,8 +54,8 @@ type P2PServiceServer interface {
 type UnimplementedP2PServiceServer struct {
 }
 
-func (UnimplementedP2PServiceServer) Recv(P2PService_RecvServer) error {
-	return status.Errorf(codes.Unimplemented, "method Recv not implemented")
+func (UnimplementedP2PServiceServer) Recv(context.Context, *Post) (*Post, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Recv not implemented")
 }
 func (UnimplementedP2PServiceServer) mustEmbedUnimplementedP2PServiceServer() {}
 
@@ -95,30 +70,22 @@ func RegisterP2PServiceServer(s grpc.ServiceRegistrar, srv P2PServiceServer) {
 	s.RegisterService(&P2PService_ServiceDesc, srv)
 }
 
-func _P2PService_Recv_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(P2PServiceServer).Recv(&p2PServiceRecvServer{stream})
-}
-
-type P2PService_RecvServer interface {
-	SendAndClose(*Post) error
-	Recv() (*Post, error)
-	grpc.ServerStream
-}
-
-type p2PServiceRecvServer struct {
-	grpc.ServerStream
-}
-
-func (x *p2PServiceRecvServer) SendAndClose(m *Post) error {
-	return x.ServerStream.SendMsg(m)
-}
-
-func (x *p2PServiceRecvServer) Recv() (*Post, error) {
-	m := new(Post)
-	if err := x.ServerStream.RecvMsg(m); err != nil {
+func _P2PService_Recv_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Post)
+	if err := dec(in); err != nil {
 		return nil, err
 	}
-	return m, nil
+	if interceptor == nil {
+		return srv.(P2PServiceServer).Recv(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/gop2pdme.P2PService/Recv",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(P2PServiceServer).Recv(ctx, req.(*Post))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 // P2PService_ServiceDesc is the grpc.ServiceDesc for P2PService service.
@@ -127,13 +94,12 @@ func (x *p2PServiceRecvServer) Recv() (*Post, error) {
 var P2PService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "gop2pdme.P2PService",
 	HandlerType: (*P2PServiceServer)(nil),
-	Methods:     []grpc.MethodDesc{},
-	Streams: []grpc.StreamDesc{
+	Methods: []grpc.MethodDesc{
 		{
-			StreamName:    "Recv",
-			Handler:       _P2PService_Recv_Handler,
-			ClientStreams: true,
+			MethodName: "Recv",
+			Handler:    _P2PService_Recv_Handler,
 		},
 	},
+	Streams:  []grpc.StreamDesc{},
 	Metadata: "proto/gop2pdme.proto",
 }

@@ -5,7 +5,7 @@ option go_package = "github.com/gop2pdme/proto/gop2pdme;gop2pdme";
 package gop2pdme;
 
 service P2PService {
-    rpc Recv(stream Post) returns (Post){}
+    rpc Recv(Post) returns (Post){}
 }
 
 message Post {
