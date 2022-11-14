@@ -56,7 +56,7 @@ func (s *server) Connect(in *gop2pdme.Post, srv gop2pdme.P2PService_ConnectServe
 	}
 }
 
-func (s *server) Disconnect(context context.Context, in *gop2pdme.Post) (out *gop2pdme.Empty, err error) {
+func (s *server) Disconnect(_ context.Context, in *gop2pdme.Post) (out *gop2pdme.Empty, err error) {
 	usr := s.users[in.Id]
 	usr.chanDone <- true
 	log.Printf("Peer %v disconnected from the server...", in.Id)
