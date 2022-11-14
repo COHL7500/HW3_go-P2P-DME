@@ -22,9 +22,7 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type P2PServiceClient interface {
-	Connect(ctx context.Context, in *Post, opts ...grpc.CallOption) (P2PService_ConnectClient, error)
-	Disconnect(ctx context.Context, in *Post, opts ...grpc.CallOption) (*Empty, error)
-	Messages(ctx context.Context, opts ...grpc.CallOption) (P2PService_MessagesClient, error)
+	Recv(ctx context.Context, opts ...grpc.CallOption) (P2PService_RecvClient, error)
 }
 
 type p2PServiceClient struct {
@@ -35,71 +33,30 @@ func NewP2PServiceClient(cc grpc.ClientConnInterface) P2PServiceClient {
 	return &p2PServiceClient{cc}
 }
 
-func (c *p2PServiceClient) Connect(ctx context.Context, in *Post, opts ...grpc.CallOption) (P2PService_ConnectClient, error) {
-	stream, err := c.cc.NewStream(ctx, &P2PService_ServiceDesc.Streams[0], "/gop2pdme.P2PService/Connect", opts...)
+func (c *p2PServiceClient) Recv(ctx context.Context, opts ...grpc.CallOption) (P2PService_RecvClient, error) {
+	stream, err := c.cc.NewStream(ctx, &P2PService_ServiceDesc.Streams[0], "/gop2pdme.P2PService/Recv", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &p2PServiceConnectClient{stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
+	x := &p2PServiceRecvClient{stream}
 	return x, nil
 }
 
-type P2PService_ConnectClient interface {
-	Recv() (*Post, error)
-	grpc.ClientStream
-}
-
-type p2PServiceConnectClient struct {
-	grpc.ClientStream
-}
-
-func (x *p2PServiceConnectClient) Recv() (*Post, error) {
-	m := new(Post)
-	if err := x.ClientStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-func (c *p2PServiceClient) Disconnect(ctx context.Context, in *Post, opts ...grpc.CallOption) (*Empty, error) {
-	out := new(Empty)
-	err := c.cc.Invoke(ctx, "/gop2pdme.P2PService/Disconnect", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *p2PServiceClient) Messages(ctx context.Context, opts ...grpc.CallOption) (P2PService_MessagesClient, error) {
-	stream, err := c.cc.NewStream(ctx, &P2PService_ServiceDesc.Streams[1], "/gop2pdme.P2PService/Messages", opts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &p2PServiceMessagesClient{stream}
-	return x, nil
-}
-
-type P2PService_MessagesClient interface {
+type P2PService_RecvClient interface {
 	Send(*Post) error
 	CloseAndRecv() (*Post, error)
 	grpc.ClientStream
 }
 
-type p2PServiceMessagesClient struct {
+type p2PServiceRecvClient struct {
 	grpc.ClientStream
 }
 
-func (x *p2PServiceMessagesClient) Send(m *Post) error {
+func (x *p2PServiceRecvClient) Send(m *Post) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *p2PServiceMessagesClient) CloseAndRecv() (*Post, error) {
+func (x *p2PServiceRecvClient) CloseAndRecv() (*Post, error) {
 	if err := x.ClientStream.CloseSend(); err != nil {
 		return nil, err
 	}
@@ -114,9 +71,7 @@ func (x *p2PServiceMessagesClient) CloseAndRecv() (*Post, error) {
 // All implementations must embed UnimplementedP2PServiceServer
 // for forward compatibility
 type P2PServiceServer interface {
-	Connect(*Post, P2PService_ConnectServer) error
-	Disconnect(context.Context, *Post) (*Empty, error)
-	Messages(P2PService_MessagesServer) error
+	Recv(P2PService_RecvServer) error
 	mustEmbedUnimplementedP2PServiceServer()
 }
 
@@ -124,14 +79,8 @@ type P2PServiceServer interface {
 type UnimplementedP2PServiceServer struct {
 }
 
-func (UnimplementedP2PServiceServer) Connect(*Post, P2PService_ConnectServer) error {
-	return status.Errorf(codes.Unimplemented, "method Connect not implemented")
-}
-func (UnimplementedP2PServiceServer) Disconnect(context.Context, *Post) (*Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Disconnect not implemented")
-}
-func (UnimplementedP2PServiceServer) Messages(P2PService_MessagesServer) error {
-	return status.Errorf(codes.Unimplemented, "method Messages not implemented")
+func (UnimplementedP2PServiceServer) Recv(P2PService_RecvServer) error {
+	return status.Errorf(codes.Unimplemented, "method Recv not implemented")
 }
 func (UnimplementedP2PServiceServer) mustEmbedUnimplementedP2PServiceServer() {}
 
@@ -146,64 +95,25 @@ func RegisterP2PServiceServer(s grpc.ServiceRegistrar, srv P2PServiceServer) {
 	s.RegisterService(&P2PService_ServiceDesc, srv)
 }
 
-func _P2PService_Connect_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(Post)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(P2PServiceServer).Connect(m, &p2PServiceConnectServer{stream})
+func _P2PService_Recv_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(P2PServiceServer).Recv(&p2PServiceRecvServer{stream})
 }
 
-type P2PService_ConnectServer interface {
-	Send(*Post) error
-	grpc.ServerStream
-}
-
-type p2PServiceConnectServer struct {
-	grpc.ServerStream
-}
-
-func (x *p2PServiceConnectServer) Send(m *Post) error {
-	return x.ServerStream.SendMsg(m)
-}
-
-func _P2PService_Disconnect_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Post)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(P2PServiceServer).Disconnect(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/gop2pdme.P2PService/Disconnect",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(P2PServiceServer).Disconnect(ctx, req.(*Post))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _P2PService_Messages_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(P2PServiceServer).Messages(&p2PServiceMessagesServer{stream})
-}
-
-type P2PService_MessagesServer interface {
+type P2PService_RecvServer interface {
 	SendAndClose(*Post) error
 	Recv() (*Post, error)
 	grpc.ServerStream
 }
 
-type p2PServiceMessagesServer struct {
+type p2PServiceRecvServer struct {
 	grpc.ServerStream
 }
 
-func (x *p2PServiceMessagesServer) SendAndClose(m *Post) error {
+func (x *p2PServiceRecvServer) SendAndClose(m *Post) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func (x *p2PServiceMessagesServer) Recv() (*Post, error) {
+func (x *p2PServiceRecvServer) Recv() (*Post, error) {
 	m := new(Post)
 	if err := x.ServerStream.RecvMsg(m); err != nil {
 		return nil, err
@@ -217,21 +127,11 @@ func (x *p2PServiceMessagesServer) Recv() (*Post, error) {
 var P2PService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "gop2pdme.P2PService",
 	HandlerType: (*P2PServiceServer)(nil),
-	Methods: []grpc.MethodDesc{
-		{
-			MethodName: "Disconnect",
-			Handler:    _P2PService_Disconnect_Handler,
-		},
-	},
+	Methods:     []grpc.MethodDesc{},
 	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "Connect",
-			Handler:       _P2PService_Connect_Handler,
-			ServerStreams: true,
-		},
-		{
-			StreamName:    "Messages",
-			Handler:       _P2PService_Messages_Handler,
+			StreamName:    "Recv",
+			Handler:       _P2PService_Recv_Handler,
 			ClientStreams: true,
 		},
 	},

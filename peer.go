@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"google.golang.org/grpc/credentials/insecure"
-	"io"
 	"log"
 	"net"
 	"os"
@@ -21,69 +20,50 @@ var pId int32
 var pCount int32
 var users []user
 
-// ---------------------------- //
-// ---------- SERVER ---------- //
-// ---------------------------- //
 type user struct {
 	id        int32
     chanDone  chan bool
     chanIn    chan gop2pdme.Post
-    outStream gop2pdme.P2PService_MessagesClient
+    outStream gop2pdme.P2PService_RecvClient
+    inStream  gop2pdme.P2PService_RecvServer
 }
 
-type server struct {
-	gop2pdme.UnimplementedP2PServiceServer
+type service struct {
+    gop2pdme.UnimplementedP2PServiceServer
 }
 
-func (s *server) Connect(in *gop2pdme.Post, srv gop2pdme.P2PService_ConnectServer) error {
-	log.Printf("Peer %v connected to the server...", in.Id)
+// ---------------------------- //
+// ---------- SERVER ---------- //
+// ---------------------------- //
+func (s *service) Recv(inStream gop2pdme.P2PService_RecvServer) error {
 	for {
-		select {
-		    // Variable declaration copies a lock value to 'm': type 'gop2pdme.Post' contains 'protoimpl.MessageState' contains 'sync.Mutex' which is 'sync.Locker'
-		    case m := <-users[in.Id].chanIn:
-			    err := srv.Send(&m)
-			    if err != nil {
-				    return err
-			    }
-		    case <-users[in.Id].chanDone:
-			    return nil
-		}
-	}
-}
-
-func (s *server) Disconnect(_ context.Context, in *gop2pdme.Post) (out *gop2pdme.Empty, err error) {
-	users[in.Id].done = true
-	log.Printf("Peer %v disconnected from the server...", in.Id)
-	return &gop2pdme.Empty{}, nil
-}
-
-func (s *server) Messages(srv gop2pdme.P2PService_MessagesServer) error {
-	for {
-		resp, err := srv.Recv()
-
-		if err == io.EOF {
-			return nil
-		}
+		resp, err := inStream.Recv()
 
 		if err != nil {
 			log.Fatalf("Failed to receive %v", err)
 			return nil
 		}
 
-		log.Println(resp)
+        if resp.Message == "disconnect" {
+            users[resp.Id].chanDone <- true
+            log.Printf("Peer %v disconnected from the server...", resp.Id)
+            return nil
+        }
+
+		users[resp.Id].chanIn <-*resp
 	}
 }
 
-func startServer(id int32) {
+func StartServer() {
 	// create listener
-	lis, err := net.Listen("tcp", + fmt.Sprintf("localhost:5%03d",pId))
+	lis, err := net.Listen("tcp",fmt.Sprintf("localhost:5%03d",pId))
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
 
 	// create grpc server
 	ss := grpc.NewServer()
-	gop2pdme.RegisterP2PServiceServer(ss, &server{})
+	gop2pdme.RegisterP2PServiceServer(ss, &service{})
 	log.Printf("server listening at %v", lis.Addr())
 
 	// launch server
@@ -95,42 +75,44 @@ func startServer(id int32) {
 // ---------------------------- //
 // ---------- CLIENT ---------- //
 // ---------------------------- //
-func send(id int32) {
-	usrIn := gop2pdme.Post{Id: pId}
-	err := users[id].outStream.Send(&usrIn)
+func Send(outStream gop2pdme.P2PService_RecvClient) {
+	usrIn := gop2pdme.Post{Id: pId, Message: "Hello!"}
+	err := outStream.Send(&usrIn)
 	if err != nil {
 		return
 	}
 }
 
-func startClient() {
-    for i := 0; i < pCount; i++ {
-        if(i != pId){
-            users = append(users,user{i,make(chan bool),make(chan gop2pdme.Post),nil})
-            go func(id int32){
+func StartClient() {
+    for i := 0; i < int(pCount); i++ {
+        if(i != int(pId)){
+            users = append(users,user{int32(i),make(chan bool),make(chan gop2pdme.Post),nil,nil})
+            go func(id int){
 	            // dial server
 	            conn, err := grpc.Dial(fmt.Sprintf("localhost:5%03d",id), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	            if err != nil {
 		            log.Fatalf("Failed to connect %v", err)
 	            }
-	            client = gop2pdme.NewP2PServiceClient(conn)
+	            client := gop2pdme.NewP2PServiceClient(conn)
 
 	            // setup streams
-	            outStream, outErr := client.Messages(context.Background(), grpc.WaitForReady(true))
+	            outStream, outErr := client.Recv(context.Background(), grpc.WaitForReady(true))
 	            if outErr != nil {
 		            log.Fatalf("Failed to open message stream: %v", outErr)
 	            }
                 users[id].outStream = outStream
-	            log.Printf("Client connected to peer %v (%v)", id, addr)
+	            log.Printf("Client connected to peer %v", id)
+                Send(outStream)
 
 	            // closes server connection
 	            select {
                     case <-users[id].chanDone:
-                        log.Printf("Closing peer connection %v", id)
+                        log.Printf("Peer %v disconnected from client", id)
                         conn.Close()
-                        log.Printf("Peer connection ended %v", id)
                 }
             }(i)
+        } else {
+            users = append(users,user{})
         }
     }
 }
@@ -140,11 +122,11 @@ func startClient() {
 // -------------------------- //
 func main() {
 	args := os.Args[1:] // args: <peer ID> <peer count>
-	var pcount, _ = strconv.ParseInt(args[0], 10, 32)
-	var pid, _ = strconv.ParseInt(args[2], 10, 32)
-    pCount = int32(pcount)
+	var pid, _ = strconv.ParseInt(args[0], 10, 32)
+    var pcount, _ = strconv.ParseInt(args[1], 10, 32)
     pId = int32(pid)
+    pCount = int32(pcount)
 
-	startClient()
-	startServer()
+	StartClient()
+	StartServer()
 }
