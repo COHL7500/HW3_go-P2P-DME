@@ -181,10 +181,10 @@ func Critical() {
             }
         }
         if(finPeers == int(peersCount)-1){
-            for _, peer := range peers {
-                peer.chanDone <- true
-            }
-            server.Stop()
+            //for _, peer := range peers {
+            //    peer.chanDone <- true
+            //}
+            //server.Stop()
             return
         }
     }
