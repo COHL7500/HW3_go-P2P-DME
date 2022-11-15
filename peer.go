@@ -36,7 +36,7 @@ type peer struct {
 	id          int32
     chanDone    chan bool
     chanIn      chan gop2pdme.Post
-    client      gop2pdme.P2PServiceClient
+    chanOut     chan gop2pdme.Post
 }
 
 type service struct {
@@ -47,14 +47,13 @@ type service struct {
 // ---------- SERVER ---------- //
 // ---------------------------- //
 func (s *service) Recv(context context.Context, resp *gop2pdme.Post) (*gop2pdme.Empty, error) {
-    log.Printf("Received %v message: %v", resp.Id, resp.Request)
-
     if resp.Lamport > lamport {
         lamport = resp.Lamport + 1
     } else {
         lamport++
     }
 
+    log.Printf("Recieved message %v at %v by %d", resp.Request, lamport, resp.Id)
     peers[resp.Id].chanIn <-*resp
     return &gop2pdme.Empty{}, nil
 }
@@ -81,16 +80,12 @@ func StartServer() {
 // ---------- CLIENT ---------- //
 // ---------------------------- //
 func Send(peerId int32, request string) {
-    lamport++
-	_, err := peers[peerId].client.Recv(context.Background(), &gop2pdme.Post{Id: id, Request: request, Lamport: lamport}, grpc.WaitForReady(true))
-    if err != nil {
-		log.Fatalf("Failed to send %v a message: %v", peerId, err)
-	}
+    peers[peerId].chanOut <- gop2pdme.Post{Id: id, Request: request, Lamport: lamport}
 }
 
 func Broadcast(request string){
     for i, _ := range peers {
-        if i != int(id) {
+        if int32(i) != id {
             Send(int32(i),request)
         }
     }
@@ -104,21 +99,31 @@ func NewClient(peerId int32){
 	}
 
     // setup client
-	peers[peerId].client = gop2pdme.NewP2PServiceClient(conn)
+	client := gop2pdme.NewP2PServiceClient(conn)
 	log.Printf("Client connected to peer %v", peerId)
 
 	// closes connection
-	select {
-        case <-peers[peerId].chanDone:
-            log.Printf("Peer %v disconnected from client", peerId)
-            conn.Close()
-	}
+    for {
+	    select {
+            case p := <-peers[peerId].chanOut:
+		        lamport++
+                log.Printf("Sendt message %v at %v", p.Request, lamport)
+                _, err := client.Recv(context.Background(), &p, grpc.WaitForReady(true))
+                if err != nil {
+		            log.Fatalf("Failed to send %v a message: %v", peerId, err)
+	            }
+            case <-peers[peerId].chanDone:
+                log.Printf("Peer %v disconnected from client", peerId)
+                conn.Close()
+                return
+	    }
+    }
 }
 
 func StartClients() {
     for i := 0; i < int(peersCount); i++ {
         if i != int(id) {
-            peers = append(peers,peer{int32(i),make(chan bool),make(chan gop2pdme.Post),nil})
+            peers = append(peers,peer{int32(i),make(chan bool,1),make(chan gop2pdme.Post,1),make(chan gop2pdme.Post,1)})
             go NewClient(int32(i))
             continue
         }
@@ -130,7 +135,7 @@ func StartClients() {
 // ---------- SETUP---------- //
 // -------------------------- //
 func Critical() {
-    reqQueue := make([]gop2pdme.Post,peersCount)
+    reqQueue := make([]gop2pdme.Post,0)
     doneCritical := false
     replies := 0
 
@@ -138,14 +143,14 @@ func Critical() {
         for {
             for i, peer := range peers {
                 if i != int(id) && len(peer.chanIn) > 0 {
-                    req := <- peer.chanIn
+                    req := <-peer.chanIn
 
                     if req.Request == "REQUEST" {
                         if state == HELD || (state == WANTED && int(id) < i) {
                             reqQueue = append(reqQueue,req)
-                        } else {
-                            Send(int32(i),"ALLOWED")
+                            continue
                         }
+                        Send(int32(i),"ALLOWED")
                         continue
                     }
                     replies++
@@ -154,24 +159,23 @@ func Critical() {
         }
     }()
 
-    go func(){
-        for {
-            if !doneCritical {
-                if state != WANTED {
-                    state = WANTED
-                    Broadcast("REQUEST")
-                } else if replies == int(peersCount)-1 {
-                    state = HELD
-                    log.Println("!!!INSIDE CRITICAL SECTION!!!")
-                    state = RELEASED
-                    doneCritical = true
-                    for _, post := range reqQueue {
-                        Send(post.Id,"ALLOWED")
-                    }
+    for {
+        if !doneCritical {
+            if state != WANTED {
+                state = WANTED
+                Broadcast("REQUEST")
+            } else if replies == int(peersCount)-1 {
+                lamport++
+                state = HELD
+                log.Printf("!!!INSIDE CRITICAL SECTION!!! %v", lamport)
+                state = RELEASED
+                doneCritical = true
+                for _, post := range reqQueue {
+                    Send(post.Id,"ALLOWED")
                 }
             }
         }
-    }()
+    }
 }
 
 func main() {
@@ -181,7 +185,7 @@ func main() {
     id = int32(pid)
     peersCount = int32(pcount)
 
-    Critical()
 	StartClients()
-	StartServer()
+	go StartServer()
+    Critical()
 }
