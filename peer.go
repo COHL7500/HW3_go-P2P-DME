@@ -197,5 +197,5 @@ func main() {
 
 	StartClients()
 	go StartServer()
-    Critical()
+    go Critical()
 }
