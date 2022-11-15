@@ -72,9 +72,11 @@ func StartServer() {
 	log.Printf("server listening at %v", lis.Addr())
 
 	// launch server
-	if err := server.Serve(lis); err != nil {
-		log.Fatalf("Failed to serve: %v", err)
-	}
+    go func(){
+	    if err := server.Serve(lis); err != nil {
+		    log.Fatalf("Failed to serve: %v", err)
+	    }
+    }()
 }
 
 // ---------------------------- //
@@ -196,6 +198,6 @@ func main() {
     peersCount = int32(pcount)
 
 	StartClients()
-	go StartServer()
-    go Critical()
+	StartServer()
+    Critical()
 }
