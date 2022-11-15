@@ -168,6 +168,7 @@ func Critical() {
                 lamport++
                 state = HELD
                 log.Printf("!!!INSIDE CRITICAL SECTION!!! %v", lamport)
+                log.Printf("Outside of critical section %v", ++lamport)
                 state = RELEASED
                 doneCritical = true
                 for _, post := range reqQueue {
