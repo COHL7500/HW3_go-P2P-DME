@@ -30,6 +30,7 @@ var (
     lamport int64 = 0
     peersCount int32
     peers []peer
+    server *grpc.Server
 )
 
 type peer struct {
@@ -66,7 +67,7 @@ func StartServer() {
 	}
 
 	// create grpc server
-	server := grpc.NewServer()
+	server = grpc.NewServer()
 	gop2pdme.RegisterP2PServiceServer(server, &service{})
 	log.Printf("server listening at %v", lis.Addr())
 
@@ -107,7 +108,7 @@ func NewClient(peerId int32){
 	    select {
             case p := <-peers[peerId].chanOut:
 		        lamport++
-                log.Printf("Sendt message %v at %v", p.Request, lamport)
+                log.Printf("Sendt message %v to %v at %v", p.Request, peerId, lamport)
                 _, err := client.Recv(context.Background(), &p, grpc.WaitForReady(true))
                 if err != nil {
 		            log.Fatalf("Failed to send %v a message: %v", peerId, err)
@@ -138,6 +139,7 @@ func Critical() {
     reqQueue := make([]gop2pdme.Post,0)
     doneCritical := false
     replies := 0
+    finPeers := 0
 
     go func(){
         for {
@@ -152,6 +154,8 @@ func Critical() {
                         }
                         Send(int32(i),"ALLOWED")
                         continue
+                    } else if req.Request == "DONE" {
+                        finPeers++
                     }
                     replies++
                 }
@@ -168,13 +172,18 @@ func Critical() {
                 lamport++
                 state = HELD
                 log.Printf("!!!INSIDE CRITICAL SECTION!!! %v", lamport)
-                log.Printf("Outside of critical section %v", ++lamport)
+                log.Printf("Outside of critical section %v", lamport+1)
                 state = RELEASED
                 doneCritical = true
-                for _, post := range reqQueue {
-                    Send(post.Id,"ALLOWED")
-                }
+                Broadcast("DONE")
             }
+        }
+        if(finPeers == int(peersCount)-1){
+            for _, peer := range peers {
+                peer.chanDone <- true
+            }
+            server.Stop()
+            return
         }
     }
 }
