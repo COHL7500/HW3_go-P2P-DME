@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
     "fmt"
+    "time"
 	"strconv"
 
 	"github.com/gop2pdme/proto"
@@ -174,17 +175,15 @@ func Critical() {
                 lamport++
                 state = HELD
                 log.Printf("!!!INSIDE CRITICAL SECTION!!! %v", lamport)
-                log.Printf("Outside of critical section %v", lamport+1)
+                time.Sleep(5 * time.Second)
+                log.Printf("Outside of critical section %v", lamport+6)
                 state = RELEASED
                 doneCritical = true
                 Broadcast("DONE")
             }
         }
         if(finPeers == int(peersCount)-1){
-            //for _, peer := range peers {
-            //    peer.chanDone <- true
-            //}
-            //server.Stop()
+            time.Sleep(2 * time.Second)
             return
         }
     }
