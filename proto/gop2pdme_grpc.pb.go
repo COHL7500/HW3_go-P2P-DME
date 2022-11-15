@@ -22,7 +22,7 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type P2PServiceClient interface {
-	Recv(ctx context.Context, in *Post, opts ...grpc.CallOption) (*Post, error)
+	Recv(ctx context.Context, in *Post, opts ...grpc.CallOption) (*Empty, error)
 }
 
 type p2PServiceClient struct {
@@ -33,8 +33,8 @@ func NewP2PServiceClient(cc grpc.ClientConnInterface) P2PServiceClient {
 	return &p2PServiceClient{cc}
 }
 
-func (c *p2PServiceClient) Recv(ctx context.Context, in *Post, opts ...grpc.CallOption) (*Post, error) {
-	out := new(Post)
+func (c *p2PServiceClient) Recv(ctx context.Context, in *Post, opts ...grpc.CallOption) (*Empty, error) {
+	out := new(Empty)
 	err := c.cc.Invoke(ctx, "/gop2pdme.P2PService/Recv", in, out, opts...)
 	if err != nil {
 		return nil, err
@@ -46,7 +46,7 @@ func (c *p2PServiceClient) Recv(ctx context.Context, in *Post, opts ...grpc.Call
 // All implementations must embed UnimplementedP2PServiceServer
 // for forward compatibility
 type P2PServiceServer interface {
-	Recv(context.Context, *Post) (*Post, error)
+	Recv(context.Context, *Post) (*Empty, error)
 	mustEmbedUnimplementedP2PServiceServer()
 }
 
@@ -54,7 +54,7 @@ type P2PServiceServer interface {
 type UnimplementedP2PServiceServer struct {
 }
 
-func (UnimplementedP2PServiceServer) Recv(context.Context, *Post) (*Post, error) {
+func (UnimplementedP2PServiceServer) Recv(context.Context, *Post) (*Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Recv not implemented")
 }
 func (UnimplementedP2PServiceServer) mustEmbedUnimplementedP2PServiceServer() {}
