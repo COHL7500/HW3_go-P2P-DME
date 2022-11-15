@@ -36,7 +36,6 @@ var (
 
 type peer struct {
 	id          int32
-    chanDone    chan bool
     chanIn      chan gop2pdme.Post
     chanOut     chan gop2pdme.Post
 }
@@ -55,7 +54,7 @@ func (s *service) Recv(context context.Context, resp *gop2pdme.Post) (*gop2pdme.
         lamport++
     }
 
-    log.Printf("Recieved message %v at %v by %d", resp.Request, lamport, resp.Id)
+    log.Printf("Recieved message %v by %d (lamport %v)", resp.Request, resp.Id, lamport)
     peers[resp.Id].chanIn <-*resp
     return &gop2pdme.Empty{}, nil
 }
@@ -70,7 +69,7 @@ func StartServer() {
 	// create grpc server
 	server = grpc.NewServer()
 	gop2pdme.RegisterP2PServiceServer(server, &service{})
-	log.Printf("server listening at %v", lis.Addr())
+	log.Printf("Server listening at %v", lis.Addr())
 
 	// launch server
     go func(){
@@ -111,15 +110,11 @@ func NewClient(peerId int32){
 	    select {
             case p := <-peers[peerId].chanOut:
 		        lamport++
-                log.Printf("Sendt message %v to %v at %v", p.Request, peerId, lamport)
+                log.Printf("Sendt message %v to %v (lamport %v)", p.Request, peerId, lamport)
                 _, err := client.Recv(context.Background(), &p, grpc.WaitForReady(true))
                 if err != nil {
 		            log.Fatalf("Failed to send %v a message: %v", peerId, err)
 	            }
-            case <-peers[peerId].chanDone:
-                log.Printf("Peer %v disconnected from client", peerId)
-                conn.Close()
-                return
 	    }
     }
 }
@@ -127,7 +122,7 @@ func NewClient(peerId int32){
 func StartClients() {
     for i := 0; i < int(peersCount); i++ {
         if i != int(id) {
-            peers = append(peers,peer{int32(i),make(chan bool,1),make(chan gop2pdme.Post,1),make(chan gop2pdme.Post,1)})
+            peers = append(peers,peer{int32(i),make(chan gop2pdme.Post,1),make(chan gop2pdme.Post,1)})
             go NewClient(int32(i))
             continue
         }
@@ -174,16 +169,17 @@ func Critical() {
             } else if replies == int(peersCount)-1 {
                 lamport++
                 state = HELD
-                log.Printf("!!!INSIDE CRITICAL SECTION!!! %v", lamport)
+                log.Println("Inside of Critical section")
                 time.Sleep(5 * time.Second)
-                log.Printf("Outside of critical section %v", lamport+6)
+                log.Println("Outside of critical section")
                 state = RELEASED
                 doneCritical = true
                 Broadcast("DONE")
             }
         }
         if(finPeers == int(peersCount)-1){
-            time.Sleep(2 * time.Second)
+            time.Sleep(5 * time.Second)
+            log.Println("All peers are done, exiting...")
             return
         }
     }
