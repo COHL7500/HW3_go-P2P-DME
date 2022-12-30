@@ -1,31 +1,22 @@
 package main
 
-import (
-	gop2pdme "github.com/gop2pdme/proto"
-	"google.golang.org/grpc"
-)
+import gop2pdme "github.com/gop2pdme/proto"
 
 const (
-	RELEASED = iota
+	REQUEST = iota
+	ALLOWED
+	DONE
+	RELEASED
 	WANTED
 	HELD
 )
 
-var (
-	id         int32 = -1
-	state            = RELEASED
-	lamport    int64 = 0
-	peersCount int32
-	peers      []peer
-	server     *grpc.Server
-)
-
-type peer struct {
-	id      int32
-	chanIn  chan gop2pdme.Post
-	chanOut chan gop2pdme.Post
-}
-
-type service struct {
+type client struct {
 	gop2pdme.UnimplementedP2PServiceServer
+	id       int32
+	state    int
+	lamport  int64
+	peers    map[int]gop2pdme.P2PServiceClient
+	reqQueue []gop2pdme.Post
+	replies  int
 }

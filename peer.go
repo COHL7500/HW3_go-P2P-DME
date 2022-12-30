@@ -1,198 +1,120 @@
-// ---------------------------- //
-// ---------- IMPORT ---------- //
-// ---------------------------- //
 package main
 
 import (
 	"context"
+	"fmt"
+	gop2pdme "github.com/gop2pdme/proto"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"log"
 	"net"
 	"os"
-    "fmt"
-    "time"
 	"strconv"
-
-	"github.com/gop2pdme/proto"
-	"google.golang.org/grpc"
+	"time"
 )
 
-// ----------------------------- //
-// ---------- GLOBALS ---------- //
-// ----------------------------- //
-const (
-    RELEASED = iota
-    WANTED
-    HELD
-)
+func (c *client) Send(id int, request int) {
+	c.lamport++
+	msg := gop2pdme.Post{Id: c.id, Request: int32(request), Lamport: c.lamport}
+	log.Printf("Sent message %v to %v (lamport %v)", request, id, c.lamport)
 
-var (
-    id int32 = -1
-    state int = RELEASED
-    lamport int64 = 0
-    peersCount int32
-    peers []peer
-    server *grpc.Server
-)
-
-type peer struct {
-	id          int32
-    chanIn      chan gop2pdme.Post
-    chanOut     chan gop2pdme.Post
+	if _, err := c.peers[id].Recv(context.Background(), &msg, grpc.WaitForReady(true)); err != nil {
+		log.Fatalf("Failed to send %v a message: %v, id, err", id, err)
+	}
 }
 
-type service struct {
-    gop2pdme.UnimplementedP2PServiceServer
+func (c *client) Broadcast(request int) {
+	for i, _ := range c.peers {
+		c.Send(i, request)
+	}
 }
 
-// ---------------------------- //
-// ---------- SERVER ---------- //
-// ---------------------------- //
-func (s *service) Recv(context context.Context, resp *gop2pdme.Post) (*gop2pdme.Empty, error) {
-    if resp.Lamport > lamport {
-        lamport = resp.Lamport + 1
-    } else {
-        lamport++
-    }
-
-    log.Printf("Recieved message %v by %d (lamport %v)", resp.Request, resp.Id, lamport)
-    peers[resp.Id].chanIn <-*resp
-    return &gop2pdme.Empty{}, nil
-}
-
-func StartServer() {
-	// create listener
-	lis, err := net.Listen("tcp",fmt.Sprintf("localhost:%d",id+5000))
-	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+func (c *client) Recv(_ context.Context, response *gop2pdme.Post) (*gop2pdme.Empty, error) {
+	if response.Lamport > c.lamport {
+		c.lamport = response.Lamport + 1
+	} else {
+		c.lamport++
 	}
 
-	// create grpc server
-	server = grpc.NewServer()
-	gop2pdme.RegisterP2PServiceServer(server, &service{})
-	log.Printf("Server listening at %v", lis.Addr())
+	log.Printf("Received message %v by %d (lamport %v", response.Request, response.Id, c.lamport)
 
-	// launch server
-    go func(){
-	    if err := server.Serve(lis); err != nil {
-		    log.Fatalf("Failed to serve: %v", err)
-	    }
-    }()
-}
-
-// ---------------------------- //
-// ---------- CLIENT ---------- //
-// ---------------------------- //
-func Send(peerId int32, request string) {
-    peers[peerId].chanOut <- gop2pdme.Post{Id: id, Request: request, Lamport: lamport}
-}
-
-func Broadcast(request string){
-    for i, _ := range peers {
-        if int32(i) != id {
-            Send(int32(i),request)
-        }
-    }
-}
-
-func NewClient(peerId int32){
-	// dial server
-	conn, err := grpc.Dial(fmt.Sprintf("localhost:%d",peerId+5000), grpc.WithInsecure())
-	if err != nil {
-		log.Fatalf("Failed to connect %v", err)
+	if response.Request == REQUEST {
+		if c.state == HELD || (c.state == WANTED && c.id < response.Id) {
+			c.reqQueue = append(c.reqQueue, *response)
+		} else {
+			c.Send(int(response.Id), ALLOWED)
+		}
+	} else {
+		c.replies++
 	}
 
-    // setup client
-	client := gop2pdme.NewP2PServiceClient(conn)
-	log.Printf("Client connected to peer %v", peerId)
-
-	// closes connection
-    for {
-	    select {
-            case p := <-peers[peerId].chanOut:
-		        lamport++
-                log.Printf("Sendt message %v to %v (lamport %v)", p.Request, peerId, lamport)
-                _, err := client.Recv(context.Background(), &p, grpc.WaitForReady(true))
-                if err != nil {
-		            log.Fatalf("Failed to send %v a message: %v", peerId, err)
-	            }
-	    }
-    }
-}
-
-func StartClients() {
-    for i := 0; i < int(peersCount); i++ {
-        if i != int(id) {
-            peers = append(peers,peer{int32(i),make(chan gop2pdme.Post,1),make(chan gop2pdme.Post,1)})
-            go NewClient(int32(i))
-            continue
-        }
-        peers = append(peers,peer{})
-    }
-}
-
-// -------------------------- //
-// ---------- SETUP---------- //
-// -------------------------- //
-func Critical() {
-    reqQueue := make([]gop2pdme.Post,0)
-    doneCritical := false
-    replies := 0
-    finPeers := 0
-
-    go func(){
-        for {
-            for i, peer := range peers {
-                if i != int(id) && len(peer.chanIn) > 0 {
-                    req := <-peer.chanIn
-
-                    if req.Request == "REQUEST" {
-                        if state == HELD || (state == WANTED && int(id) < i) {
-                            reqQueue = append(reqQueue,req)
-                            continue
-                        }
-                        Send(int32(i),"ALLOWED")
-                        continue
-                    } else if req.Request == "DONE" {
-                        finPeers++
-                    }
-                    replies++
-                }
-            }
-        }
-    }()
-
-    for {
-        if !doneCritical {
-            if state != WANTED {
-                state = WANTED
-                Broadcast("REQUEST")
-            } else if replies == int(peersCount)-1 {
-                lamport++
-                state = HELD
-                log.Println("Inside of Critical section")
-                time.Sleep(5 * time.Second)
-                log.Println("Outside of critical section")
-                state = RELEASED
-                doneCritical = true
-                Broadcast("DONE")
-            }
-        }
-        if(finPeers == int(peersCount)-1){
-            time.Sleep(5 * time.Second)
-            log.Println("All peers are done, exiting...")
-            return
-        }
-    }
+	return &gop2pdme.Empty{}, nil
 }
 
 func main() {
-	args := os.Args[1:] // args: <peer ID> <peer count>
-	var pid, _ = strconv.ParseInt(args[0], 10, 32)
-    var pcount, _ = strconv.ParseInt(args[1], 10, 32)
-    id = int32(pid)
-    peersCount = int32(pcount)
+	peerId, _ := strconv.ParseInt(os.Args[1], 10, 32)
+	peerCount, _ := strconv.ParseInt(os.Args[2], 10, 32)
 
-	StartClients()
-	StartServer()
-    Critical()
+	c := &client{
+		id:       int32(peerId),
+		state:    RELEASED,
+		lamport:  0,
+		peers:    make(map[int]gop2pdme.P2PServiceClient, int(peerCount)),
+		reqQueue: make([]gop2pdme.Post, 0),
+		replies:  0,
+	}
+
+	listen, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", int(c.id)+5000))
+
+	if err != nil {
+		log.Fatalf("Failed to listen %v", listen.Addr())
+	}
+
+	server := grpc.NewServer()
+	gop2pdme.RegisterP2PServiceServer(server, c)
+	log.Printf("Server listening at %v", listen.Addr())
+
+	go func() {
+		if err := server.Serve(listen); err != nil {
+			log.Fatalf("Failed to serve: %v", err)
+		}
+	}()
+
+	for i := 0; i < int(peerCount); i++ {
+		if i != int(c.id) {
+			connect, err := grpc.Dial(fmt.Sprintf("localhosdt:%d", i+5000), grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if err != nil {
+				log.Fatalf("Failed to connect %v", err)
+			}
+
+			c.peers[i] = gop2pdme.NewP2PServiceClient(connect)
+			log.Printf("Client connected to peer %v", i)
+
+			defer func(connect *grpc.ClientConn) {
+				err := connect.Close()
+				if err != nil {
+
+				}
+			}(connect)
+		}
+	}
+
+	doneCritical := false
+	for {
+		if !doneCritical {
+			if c.state != WANTED {
+				c.state = WANTED
+				c.Broadcast(REQUEST)
+			} else if c.replies == int(peerCount-1) {
+				c.lamport++
+				c.state = HELD
+				log.Println("inside of critical section")
+				time.Sleep(5 * time.Second)
+				log.Println("outside of critical section")
+				c.state = RELEASED
+				doneCritical = true
+				c.Broadcast(DONE)
+			}
+		}
+	}
 }
